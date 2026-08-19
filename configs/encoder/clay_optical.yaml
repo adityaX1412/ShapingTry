@@ -1,0 +1,27 @@
+_target_: shapeft.encoders.clay_encoder.Clay_Optical_Encoder
+encoder_weights: ./pretrained_models/clay-v1.5.ckpt
+download_url: https://huggingface.co/made-with-clay/Clay/resolve/main/v1.5/clay-v1.5.ckpt
+
+input_size: 128   # match dataset.img_size in configs/dataset/pastis.yaml (Clay patch_size=8 -> 16x16 grid)
+size: 'large'     # clay-v1.5.ckpt is the large (dim=1024, depth=24) config
+
+input_bands:
+  optical:
+    - B2
+    - B3
+    - B4
+    - B5
+    - B6
+    - B7
+    - B8
+    - B8A
+    - B11
+    - B12
+
+output_layers:
+  - 5
+  - 11
+  - 17
+  - 23   # last layer of the 24-block ViT-Large (0-indexed)
+
+output_dim: 1024
