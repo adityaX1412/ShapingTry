@@ -34,6 +34,25 @@ print(f"Available GPUs: {torch.cuda.device_count()}")
 for i in range(torch.cuda.device_count()):
     print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
 
+
+def init_distributed() -> tuple[torch.device, int, int, bool]:
+    """Initialize distributed CUDA training when launched with torchrun."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("This training pipeline requires CUDA because it uses NCCL and SyncBatchNorm.")
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
+    if not torch.distributed.is_initialized():
+        torch.distributed.init_process_group(backend="nccl", init_method="env://")
+
+    return device, local_rank, torch.distributed.get_rank(), True
+
 def get_shared_exp_info(hydra_config: HydraConf, is_distributed=False, rank=0) -> dict[str, str]:
     choices = OmegaConf.to_container(hydra_config.runtime.choices)
     cfg_hash = hashlib.sha1(
@@ -67,20 +86,23 @@ def get_shared_exp_info(hydra_config: HydraConf, is_distributed=False, rank=0) -
 
 def broadcast_string(value: str, src: int = 0):
     """Broadcast a string from src rank to all other ranks."""
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return value
+
     # Convert string to bytes and to tensor
     if value is not None:
         encoded = value.encode('utf-8')
-        length = torch.tensor([len(encoded)], dtype=torch.long, device='cuda')
-        data = torch.tensor(list(encoded), dtype=torch.uint8, device='cuda')
+        length = torch.tensor([len(encoded)], dtype=torch.long, device=torch.cuda.current_device())
+        data = torch.tensor(list(encoded), dtype=torch.uint8, device=torch.cuda.current_device())
     else:
-        length = torch.tensor([0], dtype=torch.long, device='cuda')
-        data = torch.tensor([], dtype=torch.uint8, device='cuda')
+        length = torch.tensor([0], dtype=torch.long, device=torch.cuda.current_device())
+        data = torch.tensor([], dtype=torch.uint8, device=torch.cuda.current_device())
 
     # Broadcast length
     torch.distributed.broadcast(length, src)
     # Allocate tensor on other ranks
     if value is None:
-        data = torch.empty(length.item(), dtype=torch.uint8, device='cuda')
+        data = torch.empty(length.item(), dtype=torch.uint8, device=torch.cuda.current_device())
     # Broadcast actual data
     torch.distributed.broadcast(data, src)
     return bytes(data.tolist()).decode('utf-8')
@@ -96,18 +118,7 @@ def main(cfg: DictConfig) -> None:
     # fix all random seeds
     fix_seed(cfg.seed)
     # distributed training variables
-    local_rank = int(os.environ["LOCAL_RANK"])
-    device = torch.device("cuda", local_rank)
-
-    torch.cuda.set_device(device)
-    torch.distributed.init_process_group(backend="nccl")
-
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
-        rank = torch.distributed.get_rank()
-        is_distributed = True
-    else:
-        rank = int(os.environ["RANK"])
-        is_distributed = False
+    device, local_rank, rank, is_distributed = init_distributed()
     # true if training else false
     train_run = cfg.train
     if train_run:
@@ -180,11 +191,11 @@ def main(cfg: DictConfig) -> None:
         )
     decoder.to(device)
     decoder = torch.nn.parallel.DistributedDataParallel(
-            decoder,
-            device_ids=[local_rank],
-            output_device=local_rank,
-            find_unused_parameters=cfg.finetune,
-        )
+        decoder,
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=cfg.finetune,
+    )
 
     logger.info(
             "Built {} for with {} encoder.".format(
@@ -370,10 +381,11 @@ def main(cfg: DictConfig) -> None:
         model_ckpt_path = get_best_model_ckpt_path(exp_dir)
     test_evaluator.evaluate(decoder, "test_model", model_ckpt_path)
 
-    if cfg.use_wandb and rank == 0:
+    if cfg.get("use_wandb", False) and rank == 0:
         wandb.finish()
 
-    torch.distributed.destroy_process_group()
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     main()

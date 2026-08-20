@@ -17,11 +17,9 @@ from einops import rearrange, repeat
 
 from shapeft.encoders.base import Encoder
 
-from claymodel.model import Encoder as ClayEncoderBase
-
-# Wavelengths (micrometers) for the Sentinel-2 L2A bands in the exact order
+# Wavelengths (nanometers) for the Sentinel-2 L2A bands in the exact order
 # used by PASTIS-HD's `bands.optical` list: B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12
-S2_WAVES = [0.493, 0.560, 0.665, 0.704, 0.740, 0.783, 0.842, 0.865, 1.610, 2.190]
+S2_WAVES_NM = [493.0, 560.0, 665.0, 704.0, 740.0, 783.0, 842.0, 865.0, 1610.0, 2190.0]
 S2_GSD = 10.0
 
 
@@ -68,9 +66,18 @@ class Clay_Optical_Encoder(Encoder):
         )
 
         self.output_layers = output_layers
+        self.output_layers_set = set(output_layers)
         self.img_size = input_size
         self.patch_size = 8
         self.dim = dim
+
+        try:
+            from claymodel.model import Encoder as ClayEncoderBase
+        except ImportError as exc:
+            raise ImportError(
+                "Clay encoder requires the claymodel package. Install it with "
+                "`pip install git+https://github.com/Clay-foundation/model.git`."
+            ) from exc
 
         self.clay_encoder = ClayEncoderBase(
             mask_ratio=0.0,
@@ -84,7 +91,7 @@ class Clay_Optical_Encoder(Encoder):
         )
 
         self.register_buffer(
-            "waves", torch.tensor(S2_WAVES, dtype=torch.float32), persistent=False
+            "waves", torch.tensor(S2_WAVES_NM, dtype=torch.float32), persistent=False
         )
 
     def forward(self, image):

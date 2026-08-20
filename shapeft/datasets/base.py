@@ -77,7 +77,13 @@ class RawGeoFMDataset(Dataset):
         self.auto_download = auto_download
 
         if not os.path.exists(self.root_path):
-            self.download(self)
+            if self.auto_download:
+                self.download()
+            else:
+                raise FileNotFoundError(
+                    f"Dataset root_path does not exist: {self.root_path}. "
+                    "Set auto_download=True for datasets that implement download()."
+                )
 
     def __len__(self) -> int:
         """Returns the length of the dataset.

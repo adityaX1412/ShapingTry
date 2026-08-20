@@ -230,8 +230,8 @@ class SegUPerNet(Decoder):
             # remove the temporal dim
             # [B C T=1 H W] -> [B C H W]
             if not self.finetune:
-                #with torch.no_grad():
-                feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
+                with torch.no_grad():
+                    feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
             else:
                 feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
 
@@ -245,7 +245,9 @@ class SegUPerNet(Decoder):
             output_shape = img[list(img.keys())[0]].shape[-2:]
 
         # interpolate to the target spatial dims
-        output = F.interpolate(output, size=output_shape, mode="bilinear")
+        output = F.interpolate(
+            output, size=output_shape, mode="bilinear", align_corners=self.align_corners
+        )
 
         return output
 
@@ -284,8 +286,8 @@ class SegUPerNet(Decoder):
             # remove the temporal dim
             # [B C T=1 H W] -> [B C H W]
             if not self.finetune:
-                #with torch.no_grad():
-                feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
+                with torch.no_grad():
+                    feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
             else:
                 feat = self.encoder({k: v[:, :, 0, :, :] for k, v in img.items()})
 
@@ -412,7 +414,9 @@ class SegMTUPerNet(SegUPerNet):
             output_shape = img[list(img.keys())[0]].shape[-2:]
 
         # interpolate to the target spatial dims
-        output = F.interpolate(output, size=output_shape, mode="bilinear")
+        output = F.interpolate(
+            output, size=output_shape, mode="bilinear", align_corners=self.align_corners
+        )
 
         return output
     

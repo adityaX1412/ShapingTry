@@ -51,7 +51,7 @@ class Trainer:
             log_interval (int): interval to log the training information.
             best_metric_key (str): metric that determines best checkpoints.
         """
-        self.rank = int(os.environ["RANK"])
+        self.rank = int(os.environ.get("RANK", 0))
         self.criterion = criterion
         self.model = model
         self.train_loader = train_loader
@@ -84,8 +84,9 @@ class Trainer:
         ], f"Invalid precision {precision}, use 'fp32', 'fp16' or 'bfp16'."
         self.enable_mixed_precision = precision != "fp32"
         self.precision = torch.float16 if (precision == "fp16") else torch.bfloat16
-        # self.scaler = torch.GradScaler("cuda", enabled=self.enable_mixed_precision)
-        self.scaler = torch.cuda.amp.GradScaler("cuda", enabled=self.enable_mixed_precision)
+        self.scaler = torch.amp.GradScaler(
+            device.type, enabled=self.enable_mixed_precision
+        )
 
         self.start_epoch = 0
 
@@ -105,15 +106,18 @@ class Trainer:
                 self.save_best_checkpoint(metrics, epoch)
                 del metrics
                 del used_time
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             self.logger.info("============ Starting epoch %i ... ============" % epoch)
             # set sampler
             self.t = time.time()
-            self.train_loader.sampler.set_epoch(epoch)
+            if hasattr(self.train_loader.sampler, "set_epoch"):
+                self.train_loader.sampler.set_epoch(epoch)
             self.train_one_epoch(epoch)
             if epoch % self.ckpt_interval == 0 and epoch != self.start_epoch: self.save_model(epoch)
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         metrics, used_time = self.evaluator(self.model, "final model")
         self.training_stats["eval_time"].update(used_time)
@@ -124,7 +128,8 @@ class Trainer:
 
         del metrics
         del used_time
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def train_one_epoch(self, epoch: int) -> None:
         """Train model for one epoch.
@@ -143,7 +148,7 @@ class Trainer:
             self.training_stats["data_time"].update(time.time() - end_time)
 
             with torch.autocast(
-                "cuda", enabled=self.enable_mixed_precision, dtype=self.precision
+                self.device.type, enabled=self.enable_mixed_precision, dtype=self.precision
             ):
                 if self.model.module.encoder.model_name != "utae_encoder":
                     logits = self.model(image, output_shape=target.shape[-2:])
@@ -220,7 +225,8 @@ class Trainer:
             checkpoint (dict[str, dict  |  int] | None, optional): already prepared checkpoint dict. Defaults to None.
         """
         if self.rank != 0:
-            torch.distributed.barrier()
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
             return
         checkpoint = self.get_checkpoint(epoch) if checkpoint is None else checkpoint
         suffix = "_best" if is_best else f"{epoch}_final" if is_final else f"{epoch}"
@@ -229,7 +235,8 @@ class Trainer:
         self.logger.info(
             f"Epoch {epoch} | Training checkpoint saved at {checkpoint_path}"
         )
-        torch.distributed.barrier()
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
         return
 
     def load_model(self, resume_path: str | pathlib.Path) -> None:

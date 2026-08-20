@@ -248,7 +248,7 @@ class BandPadding(BasePreprocessor):
                     self.used_bands_indices[k]
                 ]
             else:
-                reference = data["image"](list(data["image"].keys())[0])
+                reference = data["image"][list(data["image"].keys())[0]]
                 size = self.avail_bands_mask[k].shape + reference.shape[1:]
                 padded_image = torch.full(
                     size, fill_value=self.fill_value, dtype=reference.dtype
@@ -259,6 +259,11 @@ class BandPadding(BasePreprocessor):
 
     def update_meta(self, meta):
         """Tracking the meta statistics/info for next processor."""
+        old_mean = meta["data_mean"]
+        old_std = meta["data_std"]
+        old_min = meta["data_min"]
+        old_max = meta["data_max"]
+
         meta["data_bands"] = meta["encoder_bands"]
         for k in self.avail_bands_mask.keys():
             size = self.avail_bands_mask[k].shape
@@ -272,17 +277,17 @@ class BandPadding(BasePreprocessor):
             meta["data_max"][k] = torch.full(
                 size, fill_value=self.fill_value, dtype=torch.float
             )
-            if self.used_bands_indices[k] is not None:
-                meta["data_mean"][k][self.avail_bands_mask[k]] = meta["data_mean"][k][
+            if k in self.used_bands_indices:
+                meta["data_mean"][k][self.avail_bands_mask[k]] = old_mean[k][
                     self.used_bands_indices[k]
                 ]
-                meta["data_std"][k][self.avail_bands_mask[k]] = meta["data_std"][k][
+                meta["data_std"][k][self.avail_bands_mask[k]] = old_std[k][
                     self.used_bands_indices[k]
                 ]
-                meta["data_min"][k][self.avail_bands_mask[k]] = meta["data_min"][k][
+                meta["data_min"][k][self.avail_bands_mask[k]] = old_min[k][
                     self.used_bands_indices[k]
                 ]
-                meta["data_max"][k][self.avail_bands_mask[k]] = meta["data_max"][k][
+                meta["data_max"][k][self.avail_bands_mask[k]] = old_max[k][
                     self.used_bands_indices[k]
                 ]
         return meta
@@ -330,16 +335,18 @@ class NormalizeMeanStd(BasePreprocessor):
 
     def update_meta(self, meta):
         """Tracking the meta statistics/info for next processor."""
+        old_mean = meta["data_mean"]
+        old_std = meta["data_std"]
         meta["data_mean"] = {
             k: torch.zeros_like(v) for k, v in meta["data_mean"].items()
         }
         meta["data_std"] = {k: torch.ones_like(v) for k, v in meta["data_std"].items()}
         meta["data_min"] = {
-            k: (v - meta["data_mean"][k]) / meta["data_std"][k]
+            k: (v - old_mean[k]) / old_std[k]
             for k, v in meta["data_min"].items()
         }
         meta["data_max"] = {
-            k: (v - meta["data_mean"][k]) / meta["data_std"][k]
+            k: (v - old_mean[k]) / old_std[k]
             for k, v in meta["data_max"].items()
         }
 
@@ -457,18 +464,19 @@ class RandomCrop(BasePreprocessor):
         _, t, height, width = data["image"][list(data["image"].keys())[0]].shape
 
         if height < self.size[0] or width < self.size[1]:
-            pad_img = max(self.size[0] - height, 0), max(self.size[1] - width, 0)
-            height, width = height + 2 * pad_img[0], width + 2 * pad_img[1]
+            pad_h, pad_w = max(self.size[0] - height, 0), max(self.size[1] - width, 0)
+            old_height, old_width = height, width
+            height, width = height + 2 * pad_h, width + 2 * pad_w
             for k, v in data["image"].items():
                 padded_img = (
                     self.pad_value[k].reshape(-1, 1, 1, 1).repeat(1, t, height, width)
                 )
-                padded_img[:, :, pad_img[0] : -pad_img[0], pad_img[1] : -pad_img[1]] = v
+                padded_img[:, :, pad_h : pad_h + old_height, pad_w : pad_w + old_width] = v
                 data["image"][k] = padded_img
 
             data["target"] = TF.pad(
                 data["target"],
-                padding=padded_img,
+                padding=(pad_w, pad_h, pad_w, pad_h),
                 fill=self.ignore_index,
                 padding_mode="constant",
             )
@@ -701,18 +709,19 @@ class CenterCrop(BasePreprocessor):
         _, t, height, width = data["image"][list(data["image"].keys())[0]].shape
 
         if height < self.size[0] or width < self.size[1]:
-            pad_img = max(self.size[0] - height, 0), max(self.size[1] - width, 0)
-            height, width = height + 2 * pad_img[0], width + 2 * pad_img[1]
+            pad_h, pad_w = max(self.size[0] - height, 0), max(self.size[1] - width, 0)
+            old_height, old_width = height, width
+            height, width = height + 2 * pad_h, width + 2 * pad_w
             for k, v in data["image"].items():
                 padded_img = (
                     self.pad_value[k].reshape(-1, 1, 1, 1).repeat(1, t, height, width)
                 )
-                padded_img[:, :, pad_img[0] : -pad_img[0], pad_img[1] : -pad_img[1]] = v
+                padded_img[:, :, pad_h : pad_h + old_height, pad_w : pad_w + old_width] = v
                 data["image"][k] = padded_img
 
             data["target"] = TF.pad(
                 data["target"],
-                padding=pad_img,
+                padding=(pad_w, pad_h, pad_w, pad_h),
                 fill=self.ignore_index,
                 padding_mode="constant",
             )

@@ -5,13 +5,11 @@ class WeightedCrossEntropy(torch.nn.Module):
         super(WeightedCrossEntropy, self).__init__()
         # Initialize the weights based on the given distribution
         self.weights = [1 / w if w!=0 else 0 for w in distribution]
-
-        # Convert weights to a tensor and move to CUDA
-        loss_weights = torch.Tensor(self.weights).to("cuda")
-        self.loss = torch.nn.CrossEntropyLoss(
-            ignore_index=ignore_index, weight=loss_weights
-        )
+        self.ignore_index = ignore_index
+        self.register_buffer("loss_weights", torch.tensor(self.weights, dtype=torch.float32))
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         # Compute the weighted cross-entropy loss
-        return self.loss(logits, target)
+        return torch.nn.functional.cross_entropy(
+            logits, target, ignore_index=self.ignore_index, weight=self.loss_weights
+        )

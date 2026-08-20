@@ -3,7 +3,6 @@ import os
 import time
 from pathlib import Path
 import math
-import wandb
 
 import torch
 import torch.nn.functional as F
@@ -49,7 +48,7 @@ class Evaluator:
             use_wandb: bool = False,
             dataset_name: str = 'sen1floods11'
     ) -> None:
-        self.rank = int(os.environ["RANK"])
+        self.rank = int(os.environ.get("RANK", 0))
         self.val_loader = val_loader
         self.logger = logging.getLogger()
         self.exp_dir = exp_dir
@@ -125,7 +124,9 @@ class Evaluator:
 
         merged_pred = merged_pred / pred_count.unsqueeze(1)
         if output_shape is not None:
-            merged_pred = F.interpolate(merged_pred, size=output_shape, mode="bilinear")
+            merged_pred = F.interpolate(
+                merged_pred, size=output_shape, mode="bilinear", align_corners=False
+            )
 
         return merged_pred
 
@@ -219,14 +220,14 @@ class SegEvaluator(Evaluator):
             pred, target = pred[valid_mask], target[valid_mask]
 
             count = torch.bincount(
-                (pred * self.num_classes + target), minlength=self.num_classes ** 2
+                (target * self.num_classes + pred), minlength=self.num_classes ** 2
             )
             confusion_matrix += count.view(self.num_classes, self.num_classes)
 
-        torch.distributed.all_reduce(
-            confusion_matrix, op=torch.distributed.ReduceOp.SUM
-        )
-        print(confusion_matrix.cpu())
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(
+                confusion_matrix, op=torch.distributed.ReduceOp.SUM
+            )
         metrics = self.compute_metrics(confusion_matrix.cpu())
         self.log_metrics(metrics)
 
@@ -310,6 +311,8 @@ class SegEvaluator(Evaluator):
         self.logger.info(macc_str)
 
         if self.use_wandb and self.rank == 0:
+            import wandb
+
             wandb.log(
                 {
                     f"{self.split}_mIoU": metrics["mIoU"],
